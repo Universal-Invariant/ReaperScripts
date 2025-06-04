@@ -1,0 +1,148 @@
+desc:(Mine) Relays midi messages into the LogViewer script
+options:gmem=scriptLogViewerMem
+
+
+
+
+
+@serialize
+file_var(0, uid);  
+(uid != 0) ? gmem[idsPtr + loggerIdx] = uid;
+file_string(0, #name); 
+(#name != "") ? gm.WStr(namesPtr + maxNameLen*loggerIdx, #name);
+
+@init
+
+function rc() ( (rand(36) > 25) ? floor('0' + rand(9)) : floor('A' + rand(26)); );
+function genName()
+(     
+	file_string(0, #name); 
+	(strlen(#name) == 0) ? ( 
+	  #name = ""; // uid for FX
+	  sprintf(#name, "%c%c%c%c-%c%c%c%c%c%c%c%c", rc(),rc(),rc(),rc(), rc(),rc(),rc(),rc(),rc(),rc(),rc(),rc());
+	);     
+);
+function gm.WStr(index, str) local(offset, ch) (
+	offset = 0;
+	while (offset < strlen(str)) 
+	(
+		ch = str_getchar(str, offset);
+		ch ? 
+		(
+			gmem[index + offset] = ch;
+			offset += 1;
+		) : 0;
+	);
+	gmem[index+offset] = 0;
+);
+
+//-------------------------------------------------------------------------------- INIT -------------------------
+
+maxRelays = 1000;           // We use this to set a max on the possible # of relays as to create bitmaps that can be used to interact with the relays such as turning off logging or bypassing
+frameSize = 6;              // Size of frame = # of elements/entries in frame
+maxFrames = 20000;          // Total number of frameSize
+maxNameLen = 100;           // max possible length of relay name
+uid = rand(1);              // uid, a real number, used to id the instance. It is serialized so should be consistent between runs. Assumes no coillisions
+
+// Setup Ptr table
+constsTablePtr = 0;
+relayCountPtr = constsTablePtr + 30;                   // location where relay count is stored
+frameCountPtr = relayCountPtr + 1;                     // # of frames
+lockPtr = frameCountPtr + 1;                           // location where frame lock is stored
+idsPtr = lockPtr + 1;                                  // store for the uid's for the lock index since the count/logger id may change per run
+namesPtr = idsPtr + maxRelays + 1;                     // store for the names of each relay
+disableBMPtr = namesPtr + maxNameLen*maxRelays + 1;    // Enable bitmap Ptr (flag to enable or disable the loggers)
+thruBMPtr = disableBMPtr + maxRelays + 1;              // Thru bitmap Ptr (flat to enable or disable passing through midi messages)
+framePtr = thruBMPtr + maxRelays + 1;                  // location where frames start
+
+
+// ----------------------------- Setup gmem --------------------------------------
+// "free" memory that is not used so they do not use excess memory
+freembuf(maxFrames*frameSize + maxRelays*maxNameLen + 50000); 
+
+// Store consts in table so script can use them
+gmem[constsTablePtr +  0] = 743825; // Magic number
+gmem[constsTablePtr +  1] = maxRelays;
+gmem[constsTablePtr +  2] = frameSize;
+gmem[constsTablePtr +  3] = maxFrames;
+gmem[constsTablePtr +  4] = maxNameLen;
+gmem[constsTablePtr +  5] = relayCountPtr;
+gmem[constsTablePtr +  6] = frameCountPtr;
+gmem[constsTablePtr +  7] = lockPtr;
+gmem[constsTablePtr +  8] = idsPtr;
+gmem[constsTablePtr +  9] = namesPtr;
+gmem[constsTablePtr + 10] = disableBMPtr;
+gmem[constsTablePtr + 11] = thruBMPtr;
+gmem[constsTablePtr + 12] = framePtr;
+
+
+// Clear any global BM settings if first logger to avoid any anomolous behavior. This should execute because loggerIdx should be zero at first run at some point
+(loggerIdx == 0) ? ( i=0; loop(maxRelays, gmem[disableBMPtr + i] = 0; gmem[thruBMPtr + i] = 0; i+=1;); );
+
+
+// get unique index using logger relay count. 
+// gmem[relayCountPtr] = 0; // reset loggerIdx counter to 0 for testing or resetting
+// It may be best to scan for uid in table to see if it already exists.
+loggerIdx = atomic_add(gmem[relayCountPtr], 1) - 1;          
+
+// We store the unique id of the logger into the list
+gmem[idsPtr + loggerIdx] = uid;
+genName();
+gm.WStr(namesPtr + maxNameLen*loggerIdx, #name);
+
+
+
+
+
+
+@slider
+
+
+
+@block
+
+
+while 
+(
+	midirecv(ts, msg1, msg23) ? 
+	(
+  
+		(msg1 != 0xf8) ? // Only process non f8 midi messages
+		(
+			// GBL: Lock table, update count, store the msg in the global table, unlock
+			lockCnt = 0;
+			while
+			(
+				lockCnt += 1;
+				(atomic_setifequal(gmem[lockPtr], 0, 1) == 0) ? 
+				(
+					(atomic_get(gmem[disableBMPtr + loggerID]) == 0) ? 
+					(
+						atomic_add(gmem[frameCountPtr], 1); // Assumes no overflow
+						gmem[framePtr + frameSize*(gmem[frameCountPtr] % maxFrames) + 0] = loggerID;
+						gmem[framePtr + frameSize*(gmem[frameCountPtr] % maxFrames) + 1] = play_position;
+						gmem[framePtr + frameSize*(gmem[frameCountPtr] % maxFrames) + 2] = msg1 + (msg23 << 8);
+						gmem[framePtr + frameSize*(gmem[frameCountPtr] % maxFrames) + 3] = ts;
+						gmem[framePtr + frameSize*(gmem[frameCountPtr] % maxFrames) + 4] = seq;
+						gmem[framePtr + frameSize*(gmem[frameCountPtr] % maxFrames) + 5] = midi_bus;
+						atomic_set(gmem[lockPtr], 0);
+					);
+				0;
+				) : 1;
+				
+				// Break infinite loop TODO: Make sure this does not stop on previous loop
+				(lockCnt > 10000) ? 0;
+			);
+		);
+
+	
+		
+		(atomic_get(gmem[thruBMPtr + loggerID]) == 0) ? (
+			midisend(ts, msg1, msg23);
+		);
+		
+	);
+);
+
+@gfx 500 500
+
