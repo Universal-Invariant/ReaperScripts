@@ -16,14 +16,9 @@ StateKey = "LogViewerState"
 
 -----------------------------------------------------------------------------------------------------------------------------------
 state = {
-	-- midi queue
-	gmem_MidiBuffer = 1000,			-- location of gmem midi queue
-	lastMidiCount = 0,				-- the last midi count of the gmem midi messages used only to track how many midi messages are in the queue
-	midiMsgItems = {},				-- reaper relay scripts push midi into gmem, lua getMidiEvents gets the messages and stores them in midiMsgItem which is displayed in the midi control table for action setting
 	search = "",
 	offset = 0,
 	numRows = 50,
-
 }
 
 -- Used to force lua errors to be displayed in the console(as ImGui seems to hide them).
